@@ -1,0 +1,37 @@
+name: VLESS Checker
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install deps
+        run: |
+          pip install requests aiohttp
+          sudo apt update
+          sudo apt install -y unzip
+
+      - name: Download Xray
+        run: |
+          wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          unzip -o Xray-linux-64.zip
+          chmod +x xray
+
+      - name: Run checker
+        run: python check.py
+
+      - name: Commit result
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add alive_base64.txt
+          git commit -m "update alive subscription" || echo "no changes"
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }} HEAD:main
