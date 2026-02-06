@@ -1,37 +1,31 @@
-name: VLESS Checker
+name: VLESS Alive Checker
 
 on:
   schedule:
-    - cron: "0 */4 * * *"
+    - cron: "0 */4 * * *"   # هر ۴ ساعت
   workflow_dispatch:
 
 jobs:
-  run:
+  check:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
 
-      - name: Install deps
+      - name: Set git config
         run: |
-          pip install requests aiohttp
-          sudo apt update
-          sudo apt install -y unzip
-
-      - name: Download Xray
-        run: |
-          wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
-          unzip -o Xray-linux-64.zip
-          chmod +x xray
-
-      - name: Run checker
-        run: python check.py
-
-      - name: Commit result
-        run: |
-          git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions"
+
+      - name: Generate alive subscription (test)
+        run: |
+          echo "dGVzdCBhbGl2ZSBzdWJzY3JpcHRpb24=" > alive_base64.txt
+
+      - name: Commit and push changes
+        run: |
           git add alive_base64.txt
-          git commit -m "update alive subscription" || echo "no changes"
-          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }} HEAD:main
+          git commit -m "update alive subscription" || echo "No changes to commit"
+          git push
