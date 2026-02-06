@@ -1,111 +1,53 @@
 import base64
-import json
-import subprocess
-import asyncio
-import aiohttp
 import requests
-from urllib.parse import parse_qs
 
-XRAY = "./xray"
-TEST_URL = "https://www.google.com/generate_204"
-SOCKS_PORT = 10808
-TIMEOUT = 3
+TIMEOUT = 8
 
-def decode_sub(url):
-    r = requests.get(url, timeout=10)
-    t = r.text.strip()
+def fetch_sub(url):
     try:
-        return base64.b64decode(t).decode().splitlines()
+        r = requests.get(url, timeout=TIMEOUT)
+        if r.status_code == 200:
+            return r.text.strip()
     except:
-        return t.splitlines()
+        pass
+    return ""
 
-def parse_vless(link):
-    link = link.replace("vless://", "")
-    main = link.split("#")[0]
-    user, rest = main.split("@")
-    host_port, params = rest.split("?", 1)
-    host, port = host_port.split(":")
-    qs = parse_qs(params)
-
-    return {
-        "id": user,
-        "host": host,
-        "port": int(port),
-        "security": qs.get("security", ["none"])[0],
-        "sni": qs.get("sni", [""])[0]
-    }
-
-async def test_vless(link):
-    cfg = parse_vless(link)
-
-    xray_config = {
-        "inbounds": [{
-            "listen": "127.0.0.1",
-            "port": SOCKS_PORT,
-            "protocol": "socks",
-            "settings": {"udp": False}
-        }],
-        "outbounds": [{
-            "protocol": "vless",
-            "settings": {
-                "vnext": [{
-                    "address": cfg["host"],
-                    "port": cfg["port"],
-                    "users": [{
-                        "id": cfg["id"],
-                        "encryption": "none"
-                    }]
-                }]
-            },
-            "streamSettings": {
-                "security": cfg["security"],
-                "tlsSettings": {
-                    "serverName": cfg["sni"],
-                    "allowInsecure": False
-                }
-            }
-        }]
-    }
-
-    with open("cfg.json", "w") as f:
-        json.dump(xray_config, f)
-
-    proc = subprocess.Popen(
-        [XRAY, "-config", "cfg.json"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-
+def decode_base64(data):
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(TEST_URL, timeout=TIMEOUT):
-                return True
+        missing = len(data) % 4
+        if missing:
+            data += "=" * (4 - missing)
+        return base64.b64decode(data).decode("utf-8", errors="ignore")
     except:
-        return False
-    finally:
-        proc.kill()
+        return ""
 
-async def main():
-    subs = open("subscriptions.txt").read().splitlines()
-    links = []
+def main():
+    with open("subs.txt", "r") as f:
+        sources = [line.strip() for line in f if line.strip()]
 
-    for s in subs:
-        links.extend(decode_sub(s))
-
-    tasks = []
     vless_links = []
 
-    for l in links:
-        if l.startswith("vless://"):
-            vless_links.append(l)
-            tasks.append(test_vless(l))
+    for url in sources:
+        raw = fetch_sub(url)
+        if not raw:
+            continue
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+        decoded = decode_base64(raw)
+        for line in decoded.splitlines():
+            if line.startswith("vless://"):
+                vless_links.append(line)
 
-    alive = [l for l, r in zip(vless_links, results) if r is True]
+    # حذف تکراری‌ها
+    vless_links = list(set(vless_links))
 
-    encoded = base64.b64encode("\n".join(alive).encode()).decode()
+    # خروجی Base64
+    final_text = "\n".join(vless_links)
+    encoded = base64.b64encode(final_text.encode()).decode()
+
     with open("alive_base64.txt", "w") as f:
         f.write(encoded)
 
-asyncio.run(main())
+    print(f"Collected {len(vless_links)} VLESS configs")
+
+if __name__ == "__main__":
+    main()
