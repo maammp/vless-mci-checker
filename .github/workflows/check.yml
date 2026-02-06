@@ -14,19 +14,23 @@ jobs:
         with:
           token: ${{ secrets.PAT_TOKEN }}
 
-      - name: Set git config
+      - name: Install deps
         run: |
-          git config --global user.email "actions@github.com"
-          git config --global user.name "github-actions"
+          sudo apt update
+          sudo apt install -y unzip curl
+          pip install requests
 
-      - name: Install dependencies
-        run: pip install requests
+      - name: Install Xray
+        run: |
+          curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          unzip -o xray.zip
+          chmod +x xray
 
       - name: Run checker
         run: python check.py
 
-      - name: Commit and push
+      - name: Commit result
         run: |
           git add alive_base64.txt
-          git commit -m "update alive subscription" || echo "no change"
+          git commit -m "update alive vless" || echo "no change"
           git push
