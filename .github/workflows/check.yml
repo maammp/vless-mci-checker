@@ -2,7 +2,7 @@ name: VLESS Alive Checker
 
 on:
   schedule:
-    - cron: "0 */4 * * *"   # هر ۴ ساعت
+    - cron: "0 */4 * * *"
   workflow_dispatch:
 
 jobs:
@@ -10,8 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ secrets.PAT_TOKEN }}
 
@@ -20,12 +19,14 @@ jobs:
           git config --global user.email "actions@github.com"
           git config --global user.name "github-actions"
 
-      - name: Generate alive subscription (test)
-        run: |
-          echo "dGVzdCBhbGl2ZSBzdWJzY3JpcHRpb24=" > alive_base64.txt
+      - name: Install dependencies
+        run: pip install requests
 
-      - name: Commit and push changes
+      - name: Run checker
+        run: python check.py
+
+      - name: Commit and push
         run: |
           git add alive_base64.txt
-          git commit -m "update alive subscription" || echo "No changes to commit"
+          git commit -m "update alive subscription" || echo "no change"
           git push
