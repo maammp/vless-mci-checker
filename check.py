@@ -6,16 +6,60 @@ import tempfile
 import requests
 
 TIMEOUT = 4
-MAX_CONCURRENT = 20
+MAX_CONCURRENT = 15
 TEST_URL = "http://www.gstatic.com/generate_204"
 
 sem = asyncio.Semaphore(MAX_CONCURRENT)
 
-def decode_b64(data):
-    data += "=" * (-len(data) % 4)
-    return base64.b64decode(data).decode(errors="ignore")
 
-def build_xray_config(vless, port):
+# -----------------------------
+# Safe Base64 decoder
+# -----------------------------
+def safe_decode(data):
+    try:
+        data = data.strip()
+
+        # اگر subscription plain باشد
+        if "vless://" in data:
+            return data
+
+        # فقط کاراکترهای مجاز Base64
+        allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n\r"
+        cleaned = "".join(c for c in data if c in allowed)
+
+        cleaned += "=" * (-len(cleaned) % 4)
+
+        decoded = base64.b64decode(cleaned).decode("utf-8", errors="ignore")
+
+        return decoded
+
+    except Exception as e:
+        print("Decode failed:", e)
+        return ""
+
+
+# -----------------------------
+# Parse minimal VLESS
+# -----------------------------
+def parse_vless(link):
+    try:
+        body = link.replace("vless://", "")
+        main, _, _ = body.partition("?")
+        uuid, host = main.split("@")
+        add, port = host.split(":")
+        return {
+            "id": uuid,
+            "add": add,
+            "port": port
+        }
+    except:
+        return None
+
+
+# -----------------------------
+# Build Xray config
+# -----------------------------
+def build_config(vless, port):
     return {
         "log": {"loglevel": "none"},
         "inbounds": [{
@@ -35,28 +79,22 @@ def build_xray_config(vless, port):
                         "encryption": "none"
                     }]
                 }]
-            },
-            "streamSettings": vless.get("streamSettings", {})
+            }
         }]
     }
 
-def parse_vless(link):
-    body = link.replace("vless://", "")
-    main, _, params = body.partition("?")
-    uuid, host = main.split("@")
-    add, port = host.split(":")
-    return {
-        "id": uuid,
-        "add": add,
-        "port": port,
-        "streamSettings": {}
-    }
 
+# -----------------------------
+# Test single VLESS
+# -----------------------------
 async def test_vless(link, port):
     async with sem:
         try:
             v = parse_vless(link)
-            cfg = build_xray_config(v, port)
+            if not v:
+                return False
+
+            cfg = build_config(v, port)
 
             with tempfile.NamedTemporaryFile("w", delete=False) as f:
                 json.dump(cfg, f)
@@ -65,58 +103,3 @@ async def test_vless(link, port):
             proc = subprocess.Popen(
                 ["./xray", "run", "-config", cfg_path],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-
-            await asyncio.sleep(0.7)
-
-            r = requests.get(
-                TEST_URL,
-                proxies={
-                    "http": f"socks5h://127.0.0.1:{port}",
-                    "https": f"socks5h://127.0.0.1:{port}"
-                },
-                timeout=TIMEOUT,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile)"
-                }
-            )
-
-            proc.kill()
-            return r.status_code == 204
-
-        except:
-            return False
-
-async def main():
-    with open("subs.txt") as f:
-        subs = [l.strip() for l in f if l.strip()]
-
-    vless_all = []
-    for url in subs:
-        raw = requests.get(url, timeout=10).text
-        decoded = decode_b64(raw)
-        for l in decoded.splitlines():
-            if l.startswith("vless://"):
-                vless_all.append(l)
-
-    vless_all = list(set(vless_all))
-    print("Total VLESS:", len(vless_all))
-
-    tasks = []
-    base_port = 20000
-
-    for i, v in enumerate(vless_all):
-        tasks.append(test_vless(v, base_port + i))
-
-    results = await asyncio.gather(*tasks)
-
-    alive = [v for v, ok in zip(vless_all, results) if ok]
-
-    print("Alive:", len(alive))
-
-    encoded = base64.b64encode("\n".join(alive).encode()).decode()
-    with open("alive_base64.txt", "w") as f:
-        f.write(encoded)
-
-asyncio.run(main())
