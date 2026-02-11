@@ -6,59 +6,41 @@ import tempfile
 import requests
 
 TIMEOUT = 4
-MAX_CONCURRENT = 15
+MAX_CONCURRENT = 10
 TEST_URL = "http://www.gstatic.com/generate_204"
 
 sem = asyncio.Semaphore(MAX_CONCURRENT)
 
 
-# -----------------------------
-# Safe Base64 decoder
-# -----------------------------
 def safe_decode(data):
     try:
         data = data.strip()
 
-        # اگر subscription plain باشد
         if "vless://" in data:
             return data
 
-        # فقط کاراکترهای مجاز Base64
         allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n\r"
         cleaned = "".join(c for c in data if c in allowed)
 
         cleaned += "=" * (-len(cleaned) % 4)
 
-        decoded = base64.b64decode(cleaned).decode("utf-8", errors="ignore")
+        return base64.b64decode(cleaned).decode("utf-8", errors="ignore")
 
-        return decoded
-
-    except Exception as e:
-        print("Decode failed:", e)
+    except:
         return ""
 
 
-# -----------------------------
-# Parse minimal VLESS
-# -----------------------------
 def parse_vless(link):
     try:
         body = link.replace("vless://", "")
-        main, _, _ = body.partition("?")
+        main = body.split("?")[0]
         uuid, host = main.split("@")
         add, port = host.split(":")
-        return {
-            "id": uuid,
-            "add": add,
-            "port": port
-        }
+        return {"id": uuid, "add": add, "port": port}
     except:
         return None
 
 
-# -----------------------------
-# Build Xray config
-# -----------------------------
 def build_config(vless, port):
     return {
         "log": {"loglevel": "none"},
@@ -84,9 +66,6 @@ def build_config(vless, port):
     }
 
 
-# -----------------------------
-# Test single VLESS
-# -----------------------------
 async def test_vless(link, port):
     async with sem:
         try:
@@ -94,12 +73,76 @@ async def test_vless(link, port):
             if not v:
                 return False
 
-            cfg = build_config(v, port)
+            config = build_config(v, port)
 
             with tempfile.NamedTemporaryFile("w", delete=False) as f:
-                json.dump(cfg, f)
-                cfg_path = f.name
+                json.dump(config, f)
+                config_path = f.name
 
             proc = subprocess.Popen(
-                ["./xray", "run", "-config", cfg_path],
+                ["./xray", "run", "-config", config_path],
                 stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+
+            await asyncio.sleep(0.8)
+
+            r = requests.get(
+                TEST_URL,
+                proxies={
+                    "http": f"socks5h://127.0.0.1:{port}",
+                    "https": f"socks5h://127.0.0.1:{port}"
+                },
+                timeout=TIMEOUT,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile)"
+                }
+            )
+
+            proc.kill()
+
+            return r.status_code == 204
+
+        except:
+            return False
+
+
+async def main():
+    with open("subs.txt") as f:
+        sources = [l.strip() for l in f if l.strip()]
+
+    all_vless = []
+
+    for url in sources:
+        try:
+            raw = requests.get(url, timeout=10).text
+            decoded = safe_decode(raw)
+
+            for line in decoded.splitlines():
+                if line.startswith("vless://"):
+                    all_vless.append(line)
+        except:
+            continue
+
+    all_vless = list(set(all_vless))
+    print("Total VLESS:", len(all_vless))
+
+    base_port = 20000
+    tasks = []
+
+    for i, link in enumerate(all_vless):
+        tasks.append(test_vless(link, base_port + i))
+
+    results = await asyncio.gather(*tasks)
+
+    alive = [v for v, ok in zip(all_vless, results) if ok]
+
+    print("Alive:", len(alive))
+
+    encoded = base64.b64encode("\n".join(alive).encode()).decode()
+
+    with open("alive_base64.txt", "w") as f:
+        f.write(encoded)
+
+
+asyncio.run(main())
